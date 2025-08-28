@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
 import os
+import pickle
 import numpy as np
 
 def create_app():
@@ -13,6 +14,9 @@ def create_app():
     load_dotenv()
 
     app = Flask(__name__)
+
+    # Path to save/load the pickled model
+    MODEL_PATH = 'iris_model.pkl'
 
     @app.route('/')
     def index():
@@ -78,6 +82,63 @@ def create_app():
         
         except ValueError as e:
             return jsonify({"error": f"Invalid input data: {str(e)}"}), 400
+        except Exception as e:
+            return jsonify({"error": f"Server error: {str(e)}"}), 500
+    
+
+    @app.route('/iris/save_model', methods=['POST'])
+    def save_model():
+        """Train and save the logistic regression model to a file."""
+        try:
+            X, y = load_iris(return_X_y=True)
+            clf = LogisticRegression(
+                random_state=0,
+                solver='lbfgs',
+                multi_class='multinomial'
+            ).fit(X, y)
+
+            # Pickle the model
+            with open(MODEL_PATH, 'wb') as f:
+                pickle.dump(clf, f)
+
+            # Verify pickling
+            pickled_model = pickle.dumps(clf)
+            unpickled_model = pickle.loads(pickled_model)
+            score = unpickled_model.score(X, y)
+            return jsonify({"message": "Model saved successfully", "score": score})
+
+        except Exception as e:
+            return jsonify({"error": f"Failed to save model: {str(e)}"}), 500
+    
+
+    @app.route('/iris/load_predict', methods=['POST'])
+    def load_predict():
+        """Load the pickled model and predict from input data."""
+        try:
+            # Load the pickled model
+            with open(MODEL_PATH, 'rb') as f:
+                clf = pickle.load(f)
+
+            # Get JSON data
+            data = request.get_json()
+            if not data or 'features' not in data:
+                return jsonify({"error": "Missing 'features' in JSON payload"}), 400
+
+            features = np.array(data['features'])
+            if features.shape[1] != 4:
+                return jsonify({"error": "Each input must have exactly 4 features"}), 400
+
+            # Predict or get probabilities
+            return_probs = request.args.get('probabilities', 'false').lower() == 'true'
+            if return_probs:
+                predictions = clf.predict_proba(features).tolist()
+                return jsonify({"probabilities": predictions})
+            else:
+                predictions = clf.predict(features).tolist()
+                return jsonify({"labels": predictions})
+
+        except FileNotFoundError:
+            return jsonify({"error": "Model file not found. Save the model first using /iris/save_model"}), 404
         except Exception as e:
             return jsonify({"error": f"Server error: {str(e)}"}), 500
 
